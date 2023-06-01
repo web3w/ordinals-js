@@ -1,21 +1,33 @@
 
-const axios = require('axios');
-let Transaction = require("./transaction");
-
-async function makeRPCCall(method, params) {
-    const response = await axios.post('https://svc.blockdaemon.com/bitcoin/mainnet/native', {
-        jsonrpc: '2.0',
-        method: method,
-        params: params
-    }, {
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer qbhC0PNF34zfRyetX7MqDvz-5lU1KN0ttIbxkON8Y0FSbtN8'
-        },
-    })
-    return response.data.result;
+// const axios = require('axios');
+// let Transaction = require("./transaction");
+const fs = require('fs');
+var mime = require('mime-types')
+const getTx = async (txid) => {
+    //https://mempool.space/api/tx/051984d19027f4197fe1e03b0f6d0751c6ed8a32fefb2815e07a022fba1aea23
+    const url = `https://mempool.space/api/tx/${txid}`
+    console.log(url);
+    const data = await fetch(url);
+    return data.json()
+    // console.log(dd)
+    // return
+    //{data: utxos}
 }
-
+const getAllContent = (existing, start_index, rawWitness) => {
+    // let rawWitness = this.decodedTransaction.ins[0].witness[1]
+    let op_1 = rawWitness[start_index];
+    if (op_1 > 0 && op_1 < 76) {  // The next opcode bytes is data to be pushed onto the stack
+        existing = Buffer.concat([existing, rawWitness.slice(start_index + 1, rawWitness.length - 1)]);
+    } else if (op_1 == 76) {
+        existing = Buffer.concat([existing, rawWitness.slice(start_index + 2, rawWitness.length - 2)]);
+    } else if (op_1 == 77) { // The next byte contains the number of bytes to be pushed onto the stack.
+        let nb = rawWitness[start_index + 1] + (rawWitness[start_index + 2] * 255)
+        let new_index = start_index + 5 + (nb);
+        existing = Buffer.concat([existing, rawWitness.slice(start_index + 3, new_index)]);
+        return (getAllContent(existing, new_index, rawWitness))
+    }
+    return existing;
+}
 (async () => {
 
     let txHashes = [
@@ -35,32 +47,29 @@ async function makeRPCCall(method, params) {
         "bdd129846f34a638fce660dda2033fa9267cfb357d96842c54a24d09bfbd8422"
     ]
 
-    /*
-
-    let blockHash = await makeRPCCall('getblockhash', [775878])
-    let block = await makeRPCCall('getblock', [blockHash])
-   
-    txHashes = block.tx;
-
-    */
 
     let index = 0;
     for (const txHash of txHashes) {
 
-        let transactionRaw = await makeRPCCall('getrawtransaction', [txHash])
-
-
+        let transactionRaw = await getTx(txHash)
         console.log(index++, "/", txHashes.length)
-        let tx = new Transaction(txHash, transactionRaw);
-        if (tx.isOrdinalGenesis()) {
-            console.log("Hash", txHash, tx.isOrdinalGenesis(), tx.getContentType(), "Content length:", tx.getContentData().length)
-            tx.contentToFile()
-        } else {
-            console.log("Not an ordinal")
+        let rawWitness = Buffer.from(transactionRaw.vin[0].witness[1], 'hex')
+        try {
+            if (rawWitness[35] == 99 && rawWitness[37] == 111 && rawWitness[38] == 114 && rawWitness[39] == 100 && rawWitness[40] == 1 && rawWitness[41] == 1) {
+                let length = rawWitness[42]
+                let contentType = ""
+                for (let index = 0; index < length; index++) {
+                    contentType += String.fromCharCode(rawWitness[43 + index])
+                }
+                console.log(contentType)
+                const contentStart = 44 + length;
+                // this.isGenesis = true;
+                const data = getAllContent(Buffer.alloc(0), contentStart, rawWitness)
+                fs.writeFileSync('./tests/' + txHash.substring(0, 6) + "." + mime.extension(contentType), data, { flag: 'w' });
+            }
+        } catch (error) {
+            console.log(error)
         }
-
-
-
 
     }
 
